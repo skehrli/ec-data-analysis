@@ -1,6 +1,4 @@
-# Define variables for Poetry and Python executable
 POETRY = poetry
-PYTHON = $(POETRY) run python
 
 # Define the targets
 .PHONY: all format typecheck run
@@ -14,7 +12,7 @@ typecheck:
 	$(POETRY) run mypy ./ec_data_analysis
 
 run:
-	$(POETRY) run python ec_data_analysis/main.py
+	$(POETRY) run python main.py
 
 # target to install dependencies
 install:

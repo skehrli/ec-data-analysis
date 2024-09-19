@@ -9,10 +9,10 @@ Example usage is provided in the ec_data_analysis/main.py file:
 ```python
 def main() -> None:
     data: pd.DataFrame = pd.read_excel("data/EC_EV_dataset.xlsx", sheet_name=None)
-    supply: pd.DataFrame = getSheet("PV", data)
-    demand: pd.DataFrame = getSheet("Load", data)
+    production: pd.DataFrame = getSheet("PV", data)
+    consumption: pd.DataFrame = getSheet("Load", data)
 
-    ecData: ECDataset = ECDataset(supply, demand)
+    ecData: ECDataset = ECDataset(production, consumption)
     capacities: np.ndarray = np.linspace(1e2, 1e3, 3)
     ecData.createReport(capacities)
 ```

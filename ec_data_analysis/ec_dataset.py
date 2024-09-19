@@ -9,20 +9,18 @@ datasets for energy communities.
 TODO add this documentation
 """
 
-from battery import Battery
+from .battery import Battery
+from .constants import DECIMAL_POINTS, RETENTION_RATE, N_BINS
+from .report import Report
+from .market_solution import MarketSolution
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-from markdown_pdf import MarkdownPdf, Section
 import numpy as np
 from numpy import floating
 from numpy.typing import NDArray
 from typing import List, Optional, Any
-from constants import DECIMAL_POINTS, RETENTION_RATE
-from constants import N_BINS
-from report import Report
 from functools import cached_property
-from market_solution import MarketSolution
 import subprocess
 
 

@@ -5,7 +5,7 @@ Battery is described by its maximum capacity and retention rate (between 0 and 1
 timesteps. The current capacity describes the temporary state.
 """
 
-from constants import CONVERSION_LOSS, EPS
+from .constants import CONVERSION_LOSS, EPS
 import pandas as pd
 from typing import List
 
