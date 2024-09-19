@@ -42,7 +42,9 @@ class Report:
             case str():
                 self._markdown_texts.append(f"![{title}]({filePath})")
             case None:
-                raise ValueError("FilePath passed to Report#putFig(str, Optional[str]) is None.")
+                raise ValueError(
+                    "FilePath passed to Report#putFig(str, Optional[str]) is None."
+                )
 
     def dump(self, text: str) -> None:
         self._markdown_texts.append(text)

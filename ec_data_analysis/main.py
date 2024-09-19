@@ -170,17 +170,11 @@ def plot_lognormal_comparison(demand_dist: dict, supply_dist: dict):
 
 def main() -> None:
     data: pd.DataFrame = pd.read_excel("data/EC_EV_dataset.xlsx", sheet_name=None)
-    demand: pd.DataFrame = getSheet("Load", data)
     supply: pd.DataFrame = getSheet("PV", data)
-
-    # # concatenate to itself to simulate 2 days in the hope that battery will retain
-    # # some charge overnight - but it doesn't
-    # demand2Days: pd.DataFrame = pd.concat([demand, demand], ignore_index=True)
-    # supply2Days: pd.DataFrame = pd.concat([supply, supply], ignore_index=True)
+    demand: pd.DataFrame = getSheet("Load", data)
 
     ecData: ECDataset = ECDataset(supply, demand)
     capacities: np.ndarray = np.linspace(1e2, 1e3, 3)
-
     ecData.createReport(capacities)
 
     # Example usage

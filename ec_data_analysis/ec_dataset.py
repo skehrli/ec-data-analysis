@@ -93,15 +93,21 @@ class ECDataset:
         self.printKeyStats()
 
         report.addHeading("Sell Ratio", 2)
-        report.dump("The following figure plots the ratio of sold energy on the local market to the supply per community member.\nThis is to get a sense of how fair the distribution for sellers is.")
+        report.dump(
+            "The following figure plots the ratio of sold energy on the local market to the supply per community member.\nThis is to get a sense of how fair the distribution for sellers is."
+        )
         report.putFig("Sell Ratio", self.visualizeSellRatioDistribution())
 
         report.addHeading("Buy Ratio", 2)
-        report.dump("The following figure plots the ratio of purchased energy on the local market to the demand per community member.\nThis is to get a sense of how fair the distribution for buyers is.")
+        report.dump(
+            "The following figure plots the ratio of purchased energy on the local market to the demand per community member.\nThis is to get a sense of how fair the distribution for buyers is."
+        )
         report.putFig("Buy Ratio Distribution", self.visualizeBuyRatioDistribution())
 
         report.addHeading("Statistics With Battery", 1)
-        report.dump("The following section compares how batteries of different capacities affect the community.")
+        report.dump(
+            "The following section compares how batteries of different capacities affect the community."
+        )
 
         for maxCap in capacities:
             battery: Battery = Battery(maxCap, RETENTION_RATE)
@@ -110,17 +116,36 @@ class ECDataset:
             report.addHeading(f"Battery Capacity {maxCap} kw/h", 2)
             self.printBatteryStats()
 
-            report.addHeading("Ratio of energy obtained from battery of overall demand", 3)
-            report.dump("The following figure plots the ratio of energy obtained from the battery of the overall bought energy per community member.")
-            report.putFig("Battery Discharge Ratio", self.visualizeDischargeRatioDistribution())
+            report.addHeading(
+                "Ratio of energy obtained from battery of overall demand", 3
+            )
+            report.dump(
+                "The following figure plots the ratio of energy obtained from the battery of the overall bought energy per community member."
+            )
+            report.putFig(
+                "Battery Discharge Ratio", self.visualizeDischargeRatioDistribution()
+            )
 
-            report.addHeading("Ratio of energy sold to battery of overall sold energy", 3)
-            report.dump("The following figure plots the ratio of energy sold to the battery of the overall sold energy per community member.")
-            report.putFig("Battery Charge Ratio", self.visualizeChargeRatioDistribution())
+            report.addHeading(
+                "Ratio of energy sold to battery of overall sold energy", 3
+            )
+            report.dump(
+                "The following figure plots the ratio of energy sold to the battery of the overall sold energy per community member."
+            )
+            report.putFig(
+                "Battery Charge Ratio", self.visualizeChargeRatioDistribution()
+            )
 
-            report.addHeading("Ratio of energy sold to battery of overall sold energy", 3)
-            report.dump("The following figure plots the battery capacity, supply and demand curves over the time period of the dataset.")
-            report.putFig("Battery Capacity vs Supply and Demand Curves", self.plotSupplyDemandBatteryCurves())
+            report.addHeading(
+                "Ratio of energy sold to battery of overall sold energy", 3
+            )
+            report.dump(
+                "The following figure plots the battery capacity, supply and demand curves over the time period of the dataset."
+            )
+            report.putFig(
+                "Battery Capacity vs Supply and Demand Curves",
+                self.plotSupplyDemandBatteryCurves(),
+            )
 
         report.saveToPdf("out/report.pdf")
         self.report = None

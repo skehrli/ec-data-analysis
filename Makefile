@@ -24,4 +24,3 @@ install:
 clean:
 	rm -rf ec_data_analysis/__pycache__
 	rm -rf .mypy_cache
-	rm -rf ./out/*
