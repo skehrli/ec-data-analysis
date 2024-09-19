@@ -8,7 +8,7 @@ from typing import List
 from battery import Battery
 import matplotlib.pyplot as plt
 from functools import cached_property
-from constants import SOURCE
+from constants import SOURCE, NetworkAlloc
 from constants import TARGET
 from constants import BATTERY
 from constants import UNBOUNDED
@@ -16,14 +16,17 @@ from constants import UNBOUNDED
 
 class MarketSolution:
     data_vec: pd.Series
-    N: nx.DiGraph
+    # the 'fair' network for market allocation
+    N_fair: nx.DiGraph
     # depends only on data_vec
     tradingVolume: float
-    sellMap: dict[str, dict[str, float]]
+    sellMap: NetworkAlloc
 
     # depends also on battery capacity/status
     chargeAmount: float
-    chargeMap: Optional[dict[str, dict[str, float]]]
+    chargeMap: Optional[NetworkAlloc]
+    dischargeAmount: float
+    dischargeMap: Optional[NetworkAlloc]
 
     def __init__(self, data_vec: pd.Series) -> None:
         """
@@ -32,17 +35,24 @@ class MarketSolution:
         """
         self.chargeAmount = 0
         self.chargeMap = None
+        self.dischargeAmount = 0
+        self.dischargeMap = None
         self.data_vec = data_vec
-        self.N = self._construct_fair_network(data_vec)
-        self.tradingVolume, self.sellMap = nx.maximum_flow(self.N, SOURCE, TARGET)
+        self.N_fair = self._construct_fair_network(data_vec)
+        self.tradingVolume, self.sellMap = nx.maximum_flow(self.N_fair, SOURCE, TARGET)
 
     def computeWithBattery(self, battery: Battery) -> None:
         supply: float = self.getSupply
         demand: float = self.getDemand
+        N: nx.DiGraph
         if supply >= demand:
-            self.chargeAmount, self.chargeMap = battery.charge()
+            N = self._construct_charging_network(battery)
+            self.chargeAmount, self.chargeMap = nx.maximum_flow(N, SOURCE, TARGET)
+            battery.charge(self.chargeAmount)
         else:
-            self.chargeAmount, self.chargeMap = battery.discharge()
+            N = self._construct_discharging_network(battery)
+            self.dischargeAmount, self.dischargeMap = nx.maximum_flow(N, SOURCE, TARGET)
+            battery.discharge(self.dischargeAmount)
 
     @cached_property
     def getSupply(self) -> float:
@@ -63,14 +73,14 @@ class MarketSolution:
     def getQtyChargedForMember(self, member: int) -> float:
         node: str = self._get_node(member)
         if self.chargeMap is not None:
-            return self.chargeMap[BATTERY].get(node, 0)
+            return self.chargeMap.get(node, {}).get(BATTERY, 0)
         else:
             return 0
 
     def getQtyDischargedForMember(self, member: int) -> float:
         node: str = self._get_node(member)
-        if self.chargeMap is not None:
-            return self.chargeMap[node].get(BATTERY, 0)
+        if self.dischargeMap is not None:
+            return self.dischargeMap[BATTERY].get(node, 0)
         else:
             return 0
 
@@ -140,6 +150,36 @@ class MarketSolution:
         assert node != SOURCE and node != TARGET and node != BATTERY
         return node
 
+    def _construct_charging_network(self, battery: Battery) -> nx.DiGraph:
+        N: nx.DiGraph = nx.DiGraph()
+        N.add_node(BATTERY)
+        N.add_node(SOURCE)
+        N.add_node(TARGET)
+        N.add_edge(BATTERY, TARGET, capacity=battery.chargeAmount())
+        for i, val in enumerate(self.data_vec):
+            if val >= 0:
+                node = self._get_node(i)
+                N.add_node(node)
+                N.add_edge(node, BATTERY, capacity=UNBOUNDED)
+                cap: float = val - self.sellMap[SOURCE].get(node, 0)
+                N.add_edge(SOURCE, node, capacity=cap)
+        return N
+
+    def _construct_discharging_network(self, battery: Battery) -> nx.DiGraph:
+        N: nx.DiGraph = nx.DiGraph()
+        N.add_node(BATTERY)
+        N.add_node(SOURCE)
+        N.add_node(TARGET)
+        N.add_edge(SOURCE, BATTERY, capacity=battery.dischargeAmount())
+        for i, val in enumerate(self.data_vec):
+            if val < 0:
+                node = self._get_node(i)
+                N.add_node(node)
+                N.add_edge(BATTERY, node, capacity=UNBOUNDED)
+                cap: float = -val - self.sellMap[node].get(TARGET, 0)
+                N.add_edge(node, TARGET, capacity=cap)
+        return N
+
     def _construct_fair_network(self, vals: pd.Series) -> nx.DiGraph:
         """
         Constructs a directed graph (`nx.DiGraph`) to run a maximum flow algorithm from SOURCE to TARGET.
@@ -167,37 +207,36 @@ class MarketSolution:
         >>> network = construct_fair_network(vals)
         >>> tradingVolume, flow_dict = nx.maximum_flow(network, SOURCE, TARGET)
         """
-        prod: float = self.getSupply
-        cons: float = self.getDemand
-        prod_ratio: float = 1
-        cons_ratio: float = 1
-        if prod > cons:
-            prod_ratio = cons / prod
-        else:
-            cons_ratio = prod / cons
+        supply: float = self.getSupply
+        demand: float = self.getDemand
+
+        # scale supply/demand s.t. both market sides have equal quantity
+        supply_ratio: float = 1
+        demand_ratio: float = 1
+        if supply > demand:
+            supply_ratio = demand / supply
+        elif demand != 0:
+            demand_ratio = supply / demand
 
         network: nx.DiGraph = nx.DiGraph()
         network.add_node(SOURCE)
         network.add_node(TARGET)
         producers: List[int] = []
         consumers: List[int] = []
-        for i in range(len(vals)):
-            network.add_node(self._get_node(i))
-            if vals.iloc[i] >= 0:
+        for i, val in enumerate(vals):
+            node = self._get_node(i)
+            network.add_node(node)
+            if val >= 0:
                 producers.append(i)
-                network.add_edge(
-                    SOURCE, self._get_node(i), capacity=vals.iloc[i] * prod_ratio
-                )
+                network.add_edge(SOURCE, node, capacity=val * supply_ratio)
             else:
                 consumers.append(i)
-                network.add_edge(
-                    self._get_node(i), TARGET, capacity=-vals.iloc[i] * cons_ratio
-                )
-        for prod in producers:
-            for cons in consumers:
-                network.add_edge(
-                    self._get_node(prod), self._get_node(cons), capacity=UNBOUNDED
-                )
+                network.add_edge(node, TARGET, capacity=-val * demand_ratio)
+        network.add_edges_from(
+            (self._get_node(supply), self._get_node(demand), {"capacity": UNBOUNDED})
+            for supply in producers
+            for demand in consumers
+        )
         return network
 
     def _get_layer(self, node: str, graph: nx.DiGraph) -> int:

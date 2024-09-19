@@ -5,6 +5,8 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
+from constants import RETENTION_RATE
+from battery import Battery
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 from scipy.stats import lognorm
@@ -44,7 +46,7 @@ def getSheet(key: str, data: pd.DataFrame) -> pd.DataFrame:
     """
     sheet = data[key]
     sheet = sheet.drop(sheet.columns[0], axis=1)
-    return sheet * 250
+    return sheet / 4
 
 
 def fit_normal_distribution(df: pd.DataFrame):
@@ -171,14 +173,15 @@ def main() -> None:
     demand: pd.DataFrame = getSheet("Load", data)
     supply: pd.DataFrame = getSheet("PV", data)
 
-    pdf_file: PdfPages = PdfPages("out/figures.pdf")
+    # # concatenate to itself to simulate 2 days in the hope that battery will retain
+    # # some charge overnight - but it doesn't
+    # demand2Days: pd.DataFrame = pd.concat([demand, demand], ignore_index=True)
+    # supply2Days: pd.DataFrame = pd.concat([supply, supply], ignore_index=True)
 
-    ecData: ECDataset = ECDataset(supply, demand, outputFile=pdf_file)
-    ecData.printKeyStats()
-    ecData.visualizeSellRatioDistribution()
-    ecData.visualizeBuyRatioDistribution()
+    ecData: ECDataset = ECDataset(supply, demand)
+    capacities: np.ndarray = np.linspace(1e2, 1e3, 3)
 
-    pdf_file.close()
+    ecData.createReport(capacities)
 
     # Example usage
     # demand_dist = fit_lognormal_distribution(market_demand)

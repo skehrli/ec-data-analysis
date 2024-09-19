@@ -14,6 +14,11 @@ matplotlib = "^3.9.2"
 networkx = "^3.3"
 scipy = "^1.14.1"
 openpyxl = "^3.1.5"
+markdown = "^3.7"
+types-markdown = "^3.7.0.20240822"
+pdfkit = "^1.0.0"
+wkhtmltopdf = "^0.2"
+markdown-pdf = "^1.3"
 
 
 [tool.poetry.group.dev.dependencies]
