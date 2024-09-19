@@ -5,7 +5,7 @@ and discharged from community battery) and automatically generate a report. The 
 The functionality is provided by the *ECDataset* class. For its construction, provide it with two 2D Pandas DataFrames *production* and *consumption*, where *production*[i][j] is the production of community member j at timestep i and consumption[i][j] is the consumption of community member j at timestep i.
 
 
-Example usage is provided in the ec_data_analysis/main.py file:
+Example usage is provided in the main.py file:
 ```python
 def main() -> None:
     data: pd.DataFrame = pd.read_excel("data/EC_EV_dataset.xlsx", sheet_name=None)
