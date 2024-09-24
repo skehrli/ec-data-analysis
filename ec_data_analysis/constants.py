@@ -36,7 +36,7 @@ COLOR_PALETTE: str = "deep"
 
 # subdirectories
 OUT: str = "out"
-TEXTS: str = "report_texts"
+TEXTS: str = "ec_data_analysis.report_texts"
 
 
 class Constants:

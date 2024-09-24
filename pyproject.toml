@@ -1,11 +1,12 @@
 [tool.poetry]
 name = "ec-data-analysis"
-version = "0.3.0"
+version = "0.9.0"
 description = "Manages Energy Community Datasets with support for computing optimal energy distribution, visualization and key statistics."
 authors = ["Sascha Kehrli <skehrli@ethz.ch>"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/skehrli/ec-data-analysis"
+include = ["ec_data_analysis/report_texts/*"]
 
 [tool.poetry.dependencies]
 python = "^3.10"

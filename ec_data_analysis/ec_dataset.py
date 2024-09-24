@@ -5,8 +5,6 @@ ec_dataset.py
 
 This module contains the ECDataset class, which is used to manage and manipulate
 datasets for energy communities.
-
-TODO add this documentation
 """
 
 from .battery import Battery
@@ -105,52 +103,52 @@ class ECDataset:
     def createReport(self) -> None:
         report: Report = Report("EC Report")
         self.report = report
-        report.dumpFile(f"{TEXTS}/introduction.md")
+        report.dumpFile("introduction.md")
 
         report.addSection("Key Statistics Without Battery")
-        report.dumpFile(f"{TEXTS}/keyStats.md")
+        report.dumpFile("keyStats.md")
         self.printKeyStats()
 
         report.addHeading("Energy Consumption/Production by Source", 2)
-        report.dumpFile(f"{TEXTS}/energyBreakdown.md")
+        report.dumpFile("energyBreakdown.md")
         report.putFigs(
             self.visualizeEnergyConsumptionBreakdown(),
             self.visualizeEnergyProductionBreakdown(),
         )
 
         report.addHeading("Sell Ratio", 2)
-        report.dumpFile(f"{TEXTS}/sellRatio.md")
+        report.dumpFile("sellRatio.md")
         report.putFig("Sell Ratio", self.visualizeSellRatioDistribution())
 
         report.addHeading("Buy Ratio", 2)
-        report.dumpFile(f"{TEXTS}/buyRatio.md")
+        report.dumpFile("buyRatio.md")
         report.putFig("Buy Ratio Distribution", self.visualizeBuyRatioDistribution())
 
         report.addSection("Statistics With Battery")
-        report.dumpFile(f"{TEXTS}/statsWithBattery.md")
+        report.dumpFile("statsWithBattery.md")
 
         self._findOptimalBattery()
         self.printBatteryStats()
 
         report.addHeading("Energy Consumption/Production By Source", 2)
-        report.dumpFile(f"{TEXTS}/energyBreakdownWithBattery.md")
+        report.dumpFile("energyBreakdownWithBattery.md")
         report.putFigs(
             self.visualizeEnergyConsumptionBreakdown(),
             self.visualizeEnergyProductionBreakdown(),
         )
 
         report.addHeading("Ratio of energy obtained from battery of overall demand", 2)
-        report.dumpFile(f"{TEXTS}/dischargeRatio.md")
+        report.dumpFile("dischargeRatio.md")
         report.putFig(
             "Battery Discharge Ratio", self.visualizeDischargeRatioDistribution()
         )
 
         report.addHeading("Ratio of energy sold to battery of overall supply", 2)
-        report.dumpFile(f"{TEXTS}/chargeRatio.md")
+        report.dumpFile("chargeRatio.md")
         report.putFig("Battery Charge Ratio", self.visualizeChargeRatioDistribution())
 
         report.addHeading("Supply, Demand and Battery Capacity Curve", 2)
-        report.dumpFile(f"{TEXTS}/supplyDemandCapacityCurves.md")
+        report.dumpFile("supplyDemandCapacityCurves.md")
         report.putFig(
             "Battery Capacity vs Supply and Demand Curves",
             self.plotSupplyDemandBatteryCurves(),

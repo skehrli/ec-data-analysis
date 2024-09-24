@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+from .constants import TEXTS
+import importlib.resources
 from markdown_pdf import MarkdownPdf, Section
 from typing import List, Optional, TextIO
 
@@ -50,7 +52,7 @@ class Report:
         Dumps the text from the given file into the text queue, i.e. within the currently open section.
         """
         try:
-            file: TextIO = open(filePath, "r", encoding="utf-8")
+            file: TextIO = importlib.resources.open_text(f"{TEXTS}", filePath)
             text: str = file.read()
             self._text_queue.append(text)
         except FileNotFoundError:
@@ -67,7 +69,14 @@ class Report:
                         self._text_queue.append(
                             f'<p float="left"> <img src="{filePath1}" width="220" /> <img src="{filePath2}" width="220" /> </p>'
                         )
-                        # self._text_queue.append(f"![leftFig]({filePath1}) ![rightFig]({filePath2})")
+                    case None:
+                        raise ValueError(
+                            "FilePath passed to Report#putFigs(Optional[str], Optional[str]) is None."
+                        )
+            case None:
+                raise ValueError(
+                    "FilePath passed to Report#putFigs(Optional[str], Optional[str]) is None."
+                )
 
     def putFig(self, title: str, filePath: Optional[str]) -> None:
         """
