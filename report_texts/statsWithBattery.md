@@ -1,4 +1,4 @@
-Now we add a hypothetical battery to the community. Every member has the ability to charge the battery (similar to selling to a community member) and discharging from the battery (similar to buying from a community member). The charging/discharging privileges are allocated in an analogous way to the market clearing algorithm.
+Now we add a hypothetical battery to the community. Every member has the ability to charge the battery (similar to selling to a community member) and discharge from the battery (similar to buying from a community member). The charging/discharging privileges are allocated in an analogous way to the market clearing algorithm.
 
 The battery is only allowed to discharge to 15% of its maximal capacity and charge up to 85% of its maximal capacity. The initial capacity of the battery is 15% of the initial capacity. Note that this initial energy storage may not be discharged by the members.
 
