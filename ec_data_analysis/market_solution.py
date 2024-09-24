@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from .battery import Battery
-from .constants import SOURCE, NetworkAlloc, TARGET, BATTERY, UNBOUNDED
+from .constants import EPS, SOURCE, NetworkAlloc, TARGET, BATTERY, UNBOUNDED
 import pandas as pd
 import networkx as nx
 from typing import Optional
@@ -26,7 +26,7 @@ class MarketSolution:
 
     def __init__(self, data_vec: pd.Series) -> None:
         """
-        data_vec is a vector, where data_vec.iloc[i] is the amount of w/h member i
+        data_vec is a vector, where data_vec.iloc[i] is the amount of kw/h member i
         is selling if the value is non-negative or the amount member i is buying else.
         """
         self.chargeAmount = 0
@@ -37,7 +37,10 @@ class MarketSolution:
         self.N_fair = self._construct_fair_network(data_vec)
         self.tradingVolume, self.sellMap = nx.maximum_flow(self.N_fair, SOURCE, TARGET)
 
-    def computeWithBattery(self, battery: Battery) -> None:
+    def computeWithBattery(self, battery: Battery) -> bool:
+        """
+        Returns false iff. some unsold supply couldn't have been put into the battery.
+        """
         supply: float = self.getSupply
         demand: float = self.getDemand
         N: nx.DiGraph
@@ -45,10 +48,12 @@ class MarketSolution:
             N = self._construct_charging_network(battery)
             self.chargeAmount, self.chargeMap = nx.maximum_flow(N, SOURCE, TARGET)
             battery.charge(self.chargeAmount)
+            return abs(supply - demand - self.chargeAmount) <= EPS
         else:
             N = self._construct_discharging_network(battery)
             self.dischargeAmount, self.dischargeMap = nx.maximum_flow(N, SOURCE, TARGET)
             battery.discharge(self.dischargeAmount)
+        return True
 
     @cached_property
     def getSupply(self) -> float:
@@ -154,7 +159,7 @@ class MarketSolution:
         N.add_edge(BATTERY, TARGET, capacity=battery.chargeAmount())
         for i, val in enumerate(self.data_vec):
             if val >= 0:
-                node = self._get_node(i)
+                node: str = self._get_node(i)
                 N.add_node(node)
                 N.add_edge(node, BATTERY, capacity=UNBOUNDED)
                 cap: float = val - self.sellMap[SOURCE].get(node, 0)
@@ -169,7 +174,7 @@ class MarketSolution:
         N.add_edge(SOURCE, BATTERY, capacity=battery.dischargeAmount())
         for i, val in enumerate(self.data_vec):
             if val < 0:
-                node = self._get_node(i)
+                node: str = self._get_node(i)
                 N.add_node(node)
                 N.add_edge(BATTERY, node, capacity=UNBOUNDED)
                 cap: float = -val - self.sellMap[node].get(TARGET, 0)

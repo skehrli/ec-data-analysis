@@ -10,12 +10,12 @@ TODO add this documentation
 """
 
 from .battery import Battery
-from .constants import DECIMAL_POINTS, RETENTION_RATE, N_BINS
+from .constants import DECIMAL_POINTS, EPS, Constants, TEXTS, OUT
 from .report import Report
 from .market_solution import MarketSolution
+from .plot_utils import PlotUtils
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 from numpy import floating
 from numpy.typing import NDArray
@@ -35,6 +35,9 @@ class ECDataset:
     numParticipants: int
     numTimesteps: int
 
+    # duration of one timestep as a fraction/multiple of an hour
+    timestepDuration: float
+
     # fictional battery
     battery: Optional[Battery]
     # solutions to the flow problem per time interval
@@ -48,6 +51,7 @@ class ECDataset:
         self,
         production: pd.DataFrame,
         consumption: pd.DataFrame,
+        timestepDuration: float,
         battery: Optional[Battery] = None,
     ) -> None:
         """
@@ -64,6 +68,7 @@ class ECDataset:
         assert (
             production.shape == consumption.shape
         ), f"production and consumption have unequal shapes {production.shape} and {consumption.shape}"
+        self.timestepDuration = timestepDuration
         self.numTimesteps, self.numParticipants = production.shape
         production.columns = range(self.numParticipants)
         consumption.columns = range(self.numParticipants)
@@ -78,88 +83,102 @@ class ECDataset:
             self.marketSolutions.append(MarketSolution(df.iloc[t]))
         self._uid = 0
 
-    def changeBattery(self, newBattery: Battery) -> None:
+    def changeBattery(
+        self, newBattery: Battery, earlyTermination: bool = False
+    ) -> bool:
+        """
+        Returns whether the battery capacity is sufficient to fit all of the unsold supply.
+        If earlyTermination is set, the method returns False upon the first occurence of
+        a timestep where the battery is not sufficiently large, without computing the
+        following timesteps.
+        """
+        newBattery.reset()
         self.battery = newBattery
+        sufficient: bool = True
         for t in range(self.numTimesteps):
-            self.marketSolutions[t].computeWithBattery(newBattery)
+            if not self.marketSolutions[t].computeWithBattery(newBattery):
+                if earlyTermination:
+                    return False
+                sufficient = False
+        return sufficient
 
-    def createReport(self, capacities: np.ndarray) -> None:
+    def createReport(self) -> None:
         report: Report = Report("EC Report")
         self.report = report
+        report.dumpFile(f"{TEXTS}/introduction.md")
 
-        report.addHeading("Key Statistics", 1)
+        report.addSection("Key Statistics Without Battery")
+        report.dumpFile(f"{TEXTS}/keyStats.md")
         self.printKeyStats()
 
-        report.addHeading("Sell Ratio", 2)
-        report.dump(
-            "The following figure plots the ratio of sold energy on the local market to the supply per community member.\nThis is to get a sense of how fair the distribution for sellers is."
+        report.addHeading("Energy Consumption/Production by Source", 2)
+        report.dumpFile(f"{TEXTS}/energyBreakdown.md")
+        report.putFigs(
+            self.visualizeEnergyConsumptionBreakdown(),
+            self.visualizeEnergyProductionBreakdown(),
         )
+
+        report.addHeading("Sell Ratio", 2)
+        report.dumpFile(f"{TEXTS}/sellRatio.md")
         report.putFig("Sell Ratio", self.visualizeSellRatioDistribution())
 
         report.addHeading("Buy Ratio", 2)
-        report.dump(
-            "The following figure plots the ratio of purchased energy on the local market to the demand per community member.\nThis is to get a sense of how fair the distribution for buyers is."
-        )
+        report.dumpFile(f"{TEXTS}/buyRatio.md")
         report.putFig("Buy Ratio Distribution", self.visualizeBuyRatioDistribution())
 
-        report.addHeading("Statistics With Battery", 1)
-        report.dump(
-            "The following section compares how batteries of different capacities affect the community."
+        report.addSection("Statistics With Battery")
+        report.dumpFile(f"{TEXTS}/statsWithBattery.md")
+
+        self._findOptimalBattery()
+        self.printBatteryStats()
+
+        report.addHeading("Energy Consumption/Production By Source", 2)
+        report.dumpFile(f"{TEXTS}/energyBreakdownWithBattery.md")
+        report.putFigs(
+            self.visualizeEnergyConsumptionBreakdown(),
+            self.visualizeEnergyProductionBreakdown(),
         )
 
-        for maxCap in capacities:
-            battery: Battery = Battery(maxCap, RETENTION_RATE)
-            self.changeBattery(battery)
+        report.addHeading("Ratio of energy obtained from battery of overall demand", 2)
+        report.dumpFile(f"{TEXTS}/dischargeRatio.md")
+        report.putFig(
+            "Battery Discharge Ratio", self.visualizeDischargeRatioDistribution()
+        )
 
-            report.addHeading(f"Battery Capacity {maxCap} kw/h", 2)
-            self.printBatteryStats()
+        report.addHeading("Ratio of energy sold to battery of overall supply", 2)
+        report.dumpFile(f"{TEXTS}/chargeRatio.md")
+        report.putFig("Battery Charge Ratio", self.visualizeChargeRatioDistribution())
 
-            report.addHeading(
-                "Ratio of energy obtained from battery of overall demand", 3
-            )
-            report.dump(
-                "The following figure plots the ratio of energy obtained from the battery of the overall bought energy per community member."
-            )
-            report.putFig(
-                "Battery Discharge Ratio", self.visualizeDischargeRatioDistribution()
-            )
+        report.addHeading("Supply, Demand and Battery Capacity Curve", 2)
+        report.dumpFile(f"{TEXTS}/supplyDemandCapacityCurves.md")
+        report.putFig(
+            "Battery Capacity vs Supply and Demand Curves",
+            self.plotSupplyDemandBatteryCurves(),
+        )
 
-            report.addHeading(
-                "Ratio of energy sold to battery of overall sold energy", 3
-            )
-            report.dump(
-                "The following figure plots the ratio of energy sold to the battery of the overall sold energy per community member."
-            )
-            report.putFig(
-                "Battery Charge Ratio", self.visualizeChargeRatioDistribution()
-            )
-
-            report.addHeading(
-                "Ratio of energy sold to battery of overall sold energy", 3
-            )
-            report.dump(
-                "The following figure plots the battery capacity, supply and demand curves over the time period of the dataset."
-            )
-            report.putFig(
-                "Battery Capacity vs Supply and Demand Curves",
-                self.plotSupplyDemandBatteryCurves(),
-            )
-
-        report.saveToPdf("out/report.pdf")
+        report.saveToPdf(f"{OUT}/report.pdf")
         self.report = None
-        command = f"rm ./out/*.png"
+        command = f"rm ./{OUT}/*.png"
         subprocess.run(command, shell=True, text=True, capture_output=True)
-        print("PDF report generated at 'out/report.pdf'")
+        print(f"PDF report generated at '{OUT}/report.pdf'")
 
     def printBatteryStats(self) -> None:
-        self._printPercent(
-            "Consumption covered by battery",
-            self.getDischargeVolume() / self.getConsumptionVolume,
-        )
-        self._printPercent(
-            "Percentage of supply put to battery",
-            self.getChargeVolume() / self.getSupplyVolume,
-        )
+        match self.battery:
+            case Battery():
+                self._print(
+                    "Required Battery Capacity for Full Communal Self-Consumption (kw/h)",
+                    self.battery.capacity,
+                )
+                self._printPercent(
+                    "Consumption covered by battery",
+                    self.getDischargeVolume() / self.getConsumptionVolume,
+                )
+                self._printPercent(
+                    "Percentage of supply put to battery",
+                    self.getChargeVolume() / self.getSupplyVolume,
+                )
+            case None:
+                raise ValueError("printBatteryStats() called, but no Battery set.")
 
     def printKeyStats(self) -> None:
         self._print(
@@ -176,17 +195,17 @@ class ECDataset:
         )
         self._print(
             "Nr of overproduction vs overconsumption datapoints",
-            self._compareProductionWithConsumption,
+            self.compareProductionWithConsumption,
         )
-        self._printPercent(
-            "Consumption covered by own production",
-            (self.getConsumptionVolume - self.getDemandVolume)
-            / self.getConsumptionVolume,
-        )
-        self._printPercent(
-            "Consumption covered by trades",
-            self.getTradingVolume / self.getConsumptionVolume,
-        )
+        # self._printPercent(
+        #     "Consumption covered by own production",
+        #     (self.getConsumptionVolume - self.getDemandVolume)
+        #     / self.getConsumptionVolume,
+        # )
+        # self._printPercent(
+        #     "Consumption covered by trades",
+        #     self.getTradingVolume / self.getConsumptionVolume,
+        # )
         self._printPercent(
             "Demand covered by trades", self.getTradingVolume / self.getDemandVolume
         )
@@ -194,58 +213,96 @@ class ECDataset:
             "Percentage of supply sold", self.getTradingVolume / self.getSupplyVolume
         )
 
+    def visualizeEnergyConsumptionBreakdown(self) -> Optional[str]:
+        """
+        Plots where the consumed energy comes from (self-production, market, battery, grid).
+        """
+        # Retrieve energy breakdown for consumption
+        consumption_values = [
+            self.getSelfConsumptionVolume,  # Energy consumed from self-production
+            self.getTradingVolume,  # Energy consumed from the market
+            self.getDischargeVolume(),  # Energy consumed from battery discharge
+            self.getGridPurchaseVolume(),  # Energy consumed from the grid
+        ]
+
+        PlotUtils.createEnergyBreakdownDonutChart(
+            "Energy Consumption by Source", consumption_values
+        )
+        return self._show("EnergyBreakdownConsumption")
+
+    def visualizeEnergyProductionBreakdown(self) -> Optional[str]:
+        """
+        Plots where the produced energy goes to (self-consumption, market, battery, grid).
+        """
+        # Retrieve energy breakdown for production
+        production_values = [
+            self.getSelfConsumptionVolume,  # Energy used in self-consumption
+            self.getTradingVolume,  # Energy sold to the market
+            self.getChargeVolume(),  # Energy stored in the battery
+            self.getGridFeedInVolume(),  # Energy fed back into the grid
+        ]
+
+        PlotUtils.createEnergyBreakdownDonutChart(
+            "Energy Production by Destination", production_values
+        )
+        return self._show("EnergyBreakdownProduction")
+
     def plotSupplyDemandBatteryCurves(self) -> Optional[str]:
         """
         Plots the supply, demand and battery capacity curves over the dataset period.
         """
-        batteryCapCurve: pd.Series
         if self.battery is not None:
-            batteryCapCurve = self.battery.getCapacityCurve()
+            batteryCapCurve: pd.Series = self.battery.getCapacityCurve()
+            supplyCurve: pd.Series = self.supply.sum(axis=1)
+            demandCurve: pd.Series = self.demand.sum(axis=1)
+
+            palette = Constants.getColorPalette(6)
+            plt.figure(figsize=(12, 6))
+
+            plt.plot(
+                batteryCapCurve.index,
+                batteryCapCurve,
+                label="Battery Capacity",
+                color=palette[0],
+            )
+            plt.plot(
+                supplyCurve.index,
+                supplyCurve,
+                label="Supply Curve",
+                color=palette[1],
+            )
+            plt.plot(
+                demandCurve.index,
+                demandCurve,
+                label="Demand Curve",
+                color=palette[2],
+            )
+            plt.axhline(
+                y=self.battery.capacity,
+                color=palette[3],
+                linestyle="--",
+                label="Max Capacity (Dashed)",
+            )
+            plt.axhline(
+                y=self.battery.maxAllowedCharge,
+                color=palette[4],
+                linestyle="--",
+                label="Max Allowed Charge (Dashed)",
+            )
+            plt.axhline(
+                y=self.battery.minAllowedCharge,
+                color=palette[5],
+                linestyle="--",
+                label="Min Allowed Charge (Dashed)",
+            )
+            plt.title("Supply, Demand, and Battery Capacity Curves")
+            plt.xlabel("Time Interval")
+            plt.ylabel("kw/h")
+            plt.legend()
+            plt.grid(True)
+            return self._show("batteryDemandSupplyCurves")
         else:
-            batteryCapCurve = pd.Series()  # Empty Series if no battery data
-
-        supplyCurve: pd.Series = self.supply.sum(axis=1)
-        demandCurve: pd.Series = self.demand.sum(axis=1)
-
-        plt.figure(figsize=(12, 6))
-
-        plt.plot(
-            batteryCapCurve.index,
-            batteryCapCurve,
-            label="Battery Capacity",
-            color="blue",
-        )
-        plt.plot(supplyCurve.index, supplyCurve, label="Supply Curve", color="green")
-        plt.plot(demandCurve.index, demandCurve, label="Demand Curve", color="red")
-        plt.title("Supply, Demand, and Battery Capacity Curves")
-        plt.xlabel("Time Interval")
-        plt.ylabel("kw/h")
-        plt.legend()
-        plt.grid(True)
-        return self._show("batteryDemandSupplyCurves")
-
-    def _getHistForRatioValues(
-        self, valueVec: pd.Series
-    ) -> tuple[pd.Series, NDArray[floating[Any]]]:
-        """
-        Expects a pd.Series of ratio values (between 0 and 1) and plots a histogram of them,
-        putting the values in 100 baskets (corresponding to each percentage point).
-        Returns the histogram series to plot.
-        """
-        # Define bin edges to cover the range from 0 to 1
-        bin_edges: NDArray[floating[Any]] = np.linspace(0, 1, N_BINS + 1)
-
-        # Discretize the data into bins
-        binned_data = pd.cut(valueVec, bins=bin_edges)
-
-        # Create an IntervalIndex from bin edges
-        interval_index = pd.IntervalIndex.from_breaks(bin_edges)
-
-        # Compute histogram counts and reindex to include all bins
-        hist: pd.Series = binned_data.value_counts(sort=False).reindex(
-            interval_index, fill_value=0
-        )
-        return hist, bin_edges
+            raise ValueError("Cannot plot battery curve - no battery assigned.")
 
     def visualizeSellRatioDistribution(self) -> Optional[str]:
         """
@@ -256,11 +313,17 @@ class ECDataset:
 
         hist: pd.Series
         edges: NDArray[floating[Any]]
-        hist, edges = self._getHistForRatioValues(sellRatioVec)
+        hist, edges = PlotUtils.getHistForRatioValues(sellRatioVec)
 
         # Create the bar chart
         plt.figure(figsize=(12, 6))
-        plt.bar(edges[:-1], hist, width=np.diff(edges), edgecolor="black")
+        plt.bar(
+            edges[:-1],
+            hist,
+            width=np.diff(edges),
+            color=Constants.getColorPalette(1),
+            edgecolor="black",
+        )
         plt.xlabel("Ratio Sold")
         plt.ylabel("Number of Community Members")
         plt.title("Ratio of Sold Supply per Member")
@@ -276,11 +339,17 @@ class ECDataset:
 
         hist: pd.Series
         edges: NDArray[floating[Any]]
-        hist, edges = self._getHistForRatioValues(buyRatioVec)
+        hist, edges = PlotUtils.getHistForRatioValues(buyRatioVec)
 
         # Create the bar chart
         plt.figure(figsize=(12, 6))
-        plt.bar(edges[:-1], hist, width=np.diff(edges), edgecolor="black")
+        plt.bar(
+            edges[:-1],
+            hist,
+            width=np.diff(edges),
+            color=Constants.getColorPalette(1),
+            edgecolor="black",
+        )
         plt.xlabel("Ratio Purchased")
         plt.ylabel("Number of Community Members")
         plt.title("Ratio of Purchase Volume / Demand Volume per Member")
@@ -298,11 +367,17 @@ class ECDataset:
 
         hist: pd.Series
         edges: NDArray[floating[Any]]
-        hist, edges = self._getHistForRatioValues(dischargeRatioVec)
+        hist, edges = PlotUtils.getHistForRatioValues(dischargeRatioVec)
 
         # Create the bar chart
         plt.figure(figsize=(12, 6))
-        plt.bar(edges[:-1], hist, width=np.diff(edges), edgecolor="black")
+        plt.bar(
+            edges[:-1],
+            hist,
+            width=np.diff(edges),
+            color=Constants.getColorPalette(1),
+            edgecolor="black",
+        )
         plt.xlabel("Ratio Discharged")
         plt.ylabel("Number of Community Members")
         plt.title("Ratio of Discharge Volume / Demand Volume per Member")
@@ -320,11 +395,17 @@ class ECDataset:
 
         hist: pd.Series
         edges: NDArray[floating[Any]]
-        hist, edges = self._getHistForRatioValues(chargeRatioVec)
+        hist, edges = PlotUtils.getHistForRatioValues(chargeRatioVec)
 
         # Create the bar chart
         plt.figure(figsize=(12, 6))
-        plt.bar(edges[:-1], hist, width=np.diff(edges), edgecolor="black")
+        plt.bar(
+            edges[:-1],
+            hist,
+            width=np.diff(edges),
+            color=Constants.getColorPalette(1),
+            edgecolor="black",
+        )
         plt.xlabel("Ratio Charged")
         plt.ylabel("Number of Community Members")
         plt.title("Ratio of Charged Volume / Supply Volume per Member")
@@ -332,9 +413,9 @@ class ECDataset:
         return self._show("chargeRatioDistribution")
 
     def _show(self, figName: str) -> Optional[str]:
-        name: str = f"./out/{figName}_{self._getUid()}.png"
+        name: str = f"./{OUT}/{figName}_{self._getUid()}.png"
         match self.report:
-            case Report() as r:
+            case Report():
                 plt.savefig(name)
                 return name
             case None:
@@ -361,6 +442,42 @@ class ECDataset:
                 r.dump(f"{description}: {formatted_num}")
             case None:
                 print(f"{description}: {formatted_num}")
+
+    def getGridFeedInVolume(self) -> float:
+        """
+        Returns the overall energy fed into the grid over the timeframe of the dataset.
+        """
+        return max(
+            0,
+            self.getProductionVolume
+            - self.getSelfConsumptionVolume
+            - self.getTradingVolume
+            - self.getChargeVolume(),
+        )
+
+    def getGridPurchaseVolume(self) -> float:
+        """
+        Returns the overall energy purchased from the grid over the timeframe of the dataset.
+        """
+        return max(
+            0,
+            self.getConsumptionVolume
+            - self.getSelfConsumptionVolume
+            - self.getTradingVolume
+            - self.getDischargeVolume(),
+        )
+
+    @cached_property
+    def compareProductionWithConsumption(self) -> tuple[int, int]:
+        return (self.supply > 0).sum().sum(), (self.demand > 0).sum().sum()
+
+    @cached_property
+    def getSelfConsumptionVolume(self) -> float:
+        """
+        Returns the volume of self-consumed energy over the timeframe of the dataset.
+        """
+        selfConsumption: pd.DataFrame = self.production - self.supply
+        return selfConsumption.sum().sum()
 
     @cached_property
     def getTradingVolume(self) -> float:
@@ -469,9 +586,30 @@ class ECDataset:
             }
         )
 
-    @cached_property
-    def _compareProductionWithConsumption(self) -> tuple[int, int]:
-        return (self.supply > 0).sum().sum(), (self.demand > 0).sum().sum()
+    def _findOptimalBattery(self) -> None:
+        """
+        Binary searches for optimal battery capacity.
+        """
+        battery: Battery
+        l: float = 1.0
+        r: float
+        while True:
+            battery = Battery(l, self.timestepDuration)
+            if self.changeBattery(battery, True):
+                break
+            else:
+                l *= 2
+        r = l
+        l /= 2
+        cap: float
+        while abs(r - l) > EPS:
+            cap = (r + l) / 2
+            battery = Battery(cap, self.timestepDuration)
+            if self.changeBattery(battery, True):
+                r = cap
+            else:
+                l = cap
+        self.changeBattery(battery)
 
     def _getUid(self) -> int:
         self._uid += 1

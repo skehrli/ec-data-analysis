@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
-from ec_data_analysis.ec_dataset import ECDataset
+from ec_data_analysis import ECDataset
 import pandas as pd
-import numpy as np
 
 
 def getSheet(key: str, data: pd.DataFrame) -> pd.DataFrame:
@@ -30,9 +29,8 @@ def main() -> None:
     production: pd.DataFrame = getSheet("PV", data)
     consumption: pd.DataFrame = getSheet("Load", data)
 
-    ecData: ECDataset = ECDataset(production, consumption)
-    capacities: np.ndarray = np.linspace(1e2, 1e3, 3)
-    ecData.createReport(capacities)
+    ecData: ECDataset = ECDataset(production, consumption, 0.25)
+    ecData.createReport()
 
 if __name__ == "__main__":
     main()

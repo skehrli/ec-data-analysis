@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
 
 """
-Battery is described by its maximum capacity and retention rate (between 0 and 1) of capacity between
-timesteps. The current capacity describes the temporary state.
+Battery is described by its maximum capacity.
+The current capacity describes the temporary state.
 """
 
-from .constants import CONVERSION_LOSS, EPS
+from functools import cached_property
+from .constants import (
+    CHARGE_THRESHOLD,
+    CONVERSION_LOSS,
+    EPS,
+    RETENTION_RATE,
+    C_RATE,
+    DISCHARGE_THRESHOLD,
+)
 import pandas as pd
 from typing import List
 
 
 class Battery:
-    _capacity: float
-    _retention_rate: float
+    capacity: float
     _current_cap: float
     _capacity_curve: List[float]
+    _timestep_duration: float
 
-    def __init__(self, capacity: float, retention_rate: float):
+    def __init__(self, capacity: float, timestep_duration: float):
         assert capacity >= 0, "Battery Capacity not allowed to be negative."
-        self._capacity = capacity
-        self._current_cap = 0.0
-        self._retention_rate = retention_rate
+        self.capacity = capacity
+        self._current_cap = DISCHARGE_THRESHOLD * capacity
         self._capacity_curve = []
+        self._timestep_duration = timestep_duration
 
     def charge(self, amount: float) -> None:
         if amount - self.chargeAmount() > EPS:
@@ -42,11 +50,37 @@ class Battery:
         self._timestep()
 
     def chargeAmount(self) -> float:
-        return (self._capacity - self._current_cap) * (1 / (1 - CONVERSION_LOSS))
+        # some energy is lost when converting
+        # don't charge faster than C_RATE
+        # don't charge beyond charging threshold
+        maxChargeAmount: float = max(0.0, self.maxAllowedCharge - self._current_cap)
+        cRateLimit: float = self.getCRateLimit()
+        maxChargeAmount = min(maxChargeAmount, cRateLimit)
+        return maxChargeAmount * (1 / (1 - CONVERSION_LOSS))
+
+    def getCRateLimit(self) -> float:
+        return C_RATE * self._timestep_duration * self.capacity
 
     def dischargeAmount(self) -> float:
         # some energy is lost when converting
-        return self._current_cap * (1 - CONVERSION_LOSS)
+        # only discharge to threshold (15% by default)
+        # discharge at rate no faster than given by c_rate
+        maxDischargeAmount: float = max(0.0, self._current_cap - self.minAllowedCharge)
+        cRateLimit: float = C_RATE * self._timestep_duration * self.capacity
+        maxDischargeAmount = min(maxDischargeAmount, cRateLimit)
+        return maxDischargeAmount * (1 - CONVERSION_LOSS)
+
+    def reset(self) -> None:
+        self._capacity_curve = []
+        self._current_cap = DISCHARGE_THRESHOLD * self.capacity
+
+    @cached_property
+    def minAllowedCharge(self) -> float:
+        return DISCHARGE_THRESHOLD * self.capacity
+
+    @cached_property
+    def maxAllowedCharge(self) -> float:
+        return CHARGE_THRESHOLD * self.capacity
 
     def getCapacityCurve(self) -> pd.Series:
         return pd.Series(self._capacity_curve)
@@ -55,6 +89,6 @@ class Battery:
         """
         Executes bookkeeping operations that signify a timestep was executed.
         """
-        self._current_cap = min(self._capacity, max(0, self._current_cap))
-        self._current_cap *= self._retention_rate
+        self._current_cap = min(self.capacity, max(0, self._current_cap))
+        self._current_cap *= 1 - ((1 - RETENTION_RATE) * self._timestep_duration)
         self._capacity_curve.append(self._current_cap)
