@@ -118,11 +118,26 @@ class ECDataset:
 
         report.addHeading("Sell Ratio", 2)
         report.dumpFile("sellRatio.md")
-        report.putFig("Sell Ratio", self.visualizeSellRatioDistribution())
+        report.putFig("Sell Ratio", self.visualizeSellRatioDistribution(True))
+
+        report.addHeading("Sell Ratio without Per-Timestep Fairness", 2)
+        report.dumpFile("unfairSellRatio.md")
+        report.putFig(
+            "Sell Ratio Without Fairness", self.visualizeSellRatioDistribution(False)
+        )
 
         report.addHeading("Buy Ratio", 2)
         report.dumpFile("buyRatio.md")
-        report.putFig("Buy Ratio Distribution", self.visualizeBuyRatioDistribution())
+        report.putFig(
+            "Buy Ratio Distribution", self.visualizeBuyRatioDistribution(True)
+        )
+
+        report.addHeading("Buy Ratio without Per-Timestep Fairness", 2)
+        report.dumpFile("unfairBuyRatio.md")
+        report.putFig(
+            "Buy Ratio Distribution Without Fairness",
+            self.visualizeBuyRatioDistribution(False),
+        )
 
         report.addSection("Statistics With Battery")
         report.dumpFile("statsWithBattery.md")
@@ -302,11 +317,13 @@ class ECDataset:
         else:
             raise ValueError("Cannot plot battery curve - no battery assigned.")
 
-    def visualizeSellRatioDistribution(self) -> Optional[str]:
+    def visualizeSellRatioDistribution(self, fair: bool) -> Optional[str]:
         """
         Make a bar chart visualizing the distribution of the ratio of sold supply.
         """
-        sellRatioVec: pd.Series = self.getSellVolumePerMember / self.getSupplyPerMember
+        sellRatioVec: pd.Series = (
+            self.getSellVolumePerMember if fair else self.getUnfairSellVolumePerMember
+        ) / self.getSupplyPerMember
         sellRatioVec = sellRatioVec.replace([np.inf], 0)
 
         hist: pd.Series
@@ -328,11 +345,13 @@ class ECDataset:
         plt.grid(True)
         return self._show("sellRatioDistr")
 
-    def visualizeBuyRatioDistribution(self) -> Optional[str]:
+    def visualizeBuyRatioDistribution(self, fair: bool) -> Optional[str]:
         """
         Make a bar chart visualizing the distribution of the ratio of purchased demand.
         """
-        buyRatioVec: pd.Series = self.getBuyVolumePerMember / self.getDemandPerMember
+        buyRatioVec: pd.Series = (
+            self.getBuyVolumePerMember if fair else self.getUnfairBuyVolumePerMember
+        ) / self.getDemandPerMember
         buyRatioVec = buyRatioVec.replace([np.inf], 0)
 
         hist: pd.Series
@@ -551,6 +570,18 @@ class ECDataset:
         )
 
     @cached_property
+    def getUnfairSellVolumePerMember(self) -> pd.Series:
+        """
+        Returns a map from participant to its overall sell volume in a market case without fairness.
+        """
+        return pd.Series(
+            {
+                i: sum(sol.getUnfairQtySoldForMember(i) for sol in self.marketSolutions)
+                for i in range(self.numParticipants)
+            }
+        )
+
+    @cached_property
     def getBuyVolumePerMember(self) -> pd.Series:
         """
         Returns a map from participant to its overall buy volume.
@@ -558,6 +589,21 @@ class ECDataset:
         return pd.Series(
             {
                 i: sum(sol.getQtyPurchasedForMember(i) for sol in self.marketSolutions)
+                for i in range(self.numParticipants)
+            }
+        )
+
+    @cached_property
+    def getUnfairBuyVolumePerMember(self) -> pd.Series:
+        """
+        Returns a map from participant to its overall buy volume in a market case without fairness.
+        """
+        return pd.Series(
+            {
+                i: sum(
+                    sol.getUnfairQtyPurchasedForMember(i)
+                    for sol in self.marketSolutions
+                )
                 for i in range(self.numParticipants)
             }
         )

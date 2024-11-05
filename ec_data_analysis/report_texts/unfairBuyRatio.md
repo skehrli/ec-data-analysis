@@ -1,0 +1,1 @@
+The following bar chart shows the resulting buy ratio distribution if no fair market mechanism is employed. In this case, the max-flow algorithm just finds some optimal allocation in each timestep without any fairness guarantee.

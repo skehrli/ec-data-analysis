@@ -14,9 +14,11 @@ class MarketSolution:
     data_vec: pd.Series
     # the 'fair' network for market allocation
     N_fair: nx.DiGraph
+    N_unfair: nx.DiGraph
     # depends only on data_vec
     tradingVolume: float
     sellMap: NetworkAlloc
+    unfairSellMap: NetworkAlloc
 
     # depends also on battery capacity/status
     chargeAmount: float
@@ -35,7 +37,9 @@ class MarketSolution:
         self.dischargeMap = None
         self.data_vec = data_vec
         self.N_fair = self._construct_fair_network(data_vec)
+        self.N_unfair = self._construct_unfair_network(data_vec)
         self.tradingVolume, self.sellMap = nx.maximum_flow(self.N_fair, SOURCE, TARGET)
+        _, self.unfairSellMap = nx.maximum_flow(self.N_unfair, SOURCE, TARGET)
 
     def computeWithBattery(self, battery: Battery) -> bool:
         """
@@ -70,6 +74,14 @@ class MarketSolution:
     def getQtyPurchasedForMember(self, member: int) -> float:
         node: str = self._get_node(member)
         return self.sellMap[node].get(TARGET, 0)
+
+    def getUnfairQtySoldForMember(self, member: int) -> float:
+        node: str = self._get_node(member)
+        return self.unfairSellMap[SOURCE].get(node, 0)
+
+    def getUnfairQtyPurchasedForMember(self, member: int) -> float:
+        node: str = self._get_node(member)
+        return self.unfairSellMap[node].get(TARGET, 0)
 
     def getQtyChargedForMember(self, member: int) -> float:
         node: str = self._get_node(member)
@@ -233,6 +245,31 @@ class MarketSolution:
             else:
                 consumers.append(i)
                 network.add_edge(node, TARGET, capacity=-val * demand_ratio)
+        network.add_edges_from(
+            (self._get_node(supply), self._get_node(demand), {"capacity": UNBOUNDED})
+            for supply in producers
+            for demand in consumers
+        )
+        return network
+
+    def _construct_unfair_network(self, vals: pd.Series) -> nx.DiGraph:
+        supply: float = self.getSupply
+        demand: float = self.getDemand
+
+        network: nx.DiGraph = nx.DiGraph()
+        network.add_node(SOURCE)
+        network.add_node(TARGET)
+        producers: List[int] = []
+        consumers: List[int] = []
+        for i, val in enumerate(vals):
+            node = self._get_node(i)
+            network.add_node(node)
+            if val >= 0:
+                producers.append(i)
+                network.add_edge(SOURCE, node, capacity=val)
+            else:
+                consumers.append(i)
+                network.add_edge(node, TARGET, capacity=-val)
         network.add_edges_from(
             (self._get_node(supply), self._get_node(demand), {"capacity": UNBOUNDED})
             for supply in producers
