@@ -31,7 +31,55 @@ def aggregate_profiles(n_agg, load_profiles):
 
     return agg_df
 
-def apply_load_shifting(pv_profiles, load_profiles, percentage_dsm=None):
+################################################
+# load shifting, NOT FINISHED!!!
+def find_top_peaks(group, n=3):
+    values = group.values
+    times = group.index
+
+    peaks, _ = find_peaks(values, distance=3)  # 3 hrs distance between peaks?
+    # get top n peaks if available
+    if len(peaks) >= n:
+        top_peaks = sorted(peaks, key=lambda i: values[i], reverse=True)[:n]
+    else:
+        top_peaks = peaks  # if fewer than n peaks, take what there is
+
+    peak_values = values[top_peaks]
+    peak_times = times[top_peaks].strftime('%H:%M:%S')  # format as time
+
+    # fill with 0s if fewer than 3 peaks (and nan for time)
+    while len(peak_values) < n:
+        peak_values = np.append(peak_values, 0)
+        peak_times = np.append(peak_times, np.nan)
+
+    return np.concatenate((peak_values, peak_times))
+
+
+def find_valid_peak(row_pv, row_load):
+    cutoff_time = pd.to_datetime('22:00:00', format='%H:%M:%S').time()  # cannot do load shifting after 10pm
+
+    pv_time = row_pv.Time_Peak_1
+
+    # Check each peak in load
+    for peak_time in ['Time_Peak_1', 'Time_Peak_2', 'Time_Peak_3']:
+        load_time = getattr(row_load, peak_time)
+
+        # ensure valid time values
+        if pd.isna(load_time):
+            continue
+
+        # CURRENTLY: check if load time is more than 2 hrs after pv peak time but before 22:00
+        # this part could be changed to more than 2 hrs BEFORE pv peak time but after 07:00 ?? or both.
+        if ((datetime.combine(datetime.today(), load_time) - datetime.combine(datetime.today(),
+                                                                              pv_time)).total_seconds() > 7200) and (
+                load_time < cutoff_time):
+            return load_time  # return the first valid load time
+
+    return np.nan  # if no valid peak, return nan
+
+
+# need to finish!!
+def apply_load_shifting(pv_profiles, load_profiles, percentage_dsm, lec_flag=True):
     # dishwashers (daily) ... avg 0.643 kwh per use
     # washing machines (every 3 days) ... avg 0.5 kwh per use
 
@@ -41,35 +89,109 @@ def apply_load_shifting(pv_profiles, load_profiles, percentage_dsm=None):
      maybe this will already be obvious from input, lec will have many members, individuals just 1"""
 
     numMembers = load_profiles.shape[1]
-    if percentage_dsm:
-        # this would mean working with LEC
-        numDSM = round(numMembers * percentage_dsm / 100)
-        columns_to_modify = load_profiles.sample(n=numDSM, axis=1).columns.sort_values()  # members with dsm
+    numDSM = round(numMembers * percentage_dsm / 100)
+    columns_to_modify = load_profiles.sample(n=numDSM, axis=1).columns.sort_values()  # members with dsm
+    # now find 20% of columns_to_modify which will shave 1 hour BEFORE 'hour_to_shave', and add to 1hr BEFORE peak pv
+    # 20% which will shave 1 hour AFTER 'hour_to_shave', and add to 1hr AFTER peak pv
+    # and 60% which will shave right on 'hour_to_shave', and add to peak pv
 
+    if lec_flag:
         # aggregate all load profiles
-        load_df = pd.DataFrame()
-        load_df[load_profiles.columns[0]] = load_profiles.iloc[:, 0]  # assuming we have timeseries data in 1st col
+        load_df = pd.DataFrame(index=load_profiles.index)  # df with aggregated load profiles
         load_df['agg_load'] = load_profiles.iloc[:, 1:].sum(axis=1)
+        # print("load df: ", load_df)
         # but now would need to divide by days, find daily load peaks, establish time of day when load-shifting can
         # be applied, e.g. 10am-10pm?, and identify which peaks to "shave" daily (i.e. substracted from columns_to_modify).
 
+        # find 3 highest values
+        N_peaks = 3
+        daily_peaks = load_df.groupby(load_df.index.date)['agg_load'].apply(find_top_peaks, n=N_peaks)
+        # new DF with daily timestamp, and N columns with the peaks and N with the times
+        # make columns
+        peak_columns = [f'Peak_{i + 1}' for i in range(N_peaks)]
+        time_columns = [f'Time_Peak_{i + 1}' for i in range(N_peaks)]
+        all_columns = peak_columns + time_columns
+        load_peaks_df = pd.DataFrame(daily_peaks.tolist(),
+                                      index=pd.to_datetime(daily_peaks.index),
+                                      columns=all_columns)
+        # print("load peaks: ", load_peaks_df)
+
         # aggregate all pv profiles and find peak
-        pv_df = pd.DataFrame()
-        pv_df[pv_profiles.columns[0]] = pv_profiles.iloc[:, 0]  # assuming we have timeseries data in 1st col
+        pv_df = pd.DataFrame(index=pv_profiles.index)  # df with aggregated load profiles
         pv_df['agg_pv'] = pv_profiles.iloc[:, 1:].sum(axis=1)
+        # print("pv df: ", pv_df)
         # but now would need to divide by days, find daily pv peak, establish window of +-2 hours from peak where
         # daily "shaved" loads can be shifted to (i.e. added to columns_to_modify).
 
+        N_peaks = 1
+        daily_peaks = pv_df.groupby(pv_df.index.date)['agg_pv'].apply(find_top_peaks, n=N_peaks)
+        peak_columns = [f'Peak_{i + 1}' for i in range(N_peaks)]
+        time_columns = [f'Time_Peak_{i + 1}' for i in range(N_peaks)]
+        all_columns = peak_columns + time_columns
+        pv_peak_df = pd.DataFrame(daily_peaks.tolist(),
+                                      index=pd.to_datetime(daily_peaks.index),
+                                      columns=all_columns)
+        # print("pv peaks: ", pv_peak_df)
+
+        pv_peak_df['Time_Peak_1'] = pd.to_datetime(pv_peak_df['Time_Peak_1'], format='%H:%M:%S').dt.time
+        load_peaks_df['Time_Peak_1'] = pd.to_datetime(load_peaks_df['Time_Peak_1'], format='%H:%M:%S').dt.time
+        load_peaks_df['Time_Peak_2'] = pd.to_datetime(load_peaks_df['Time_Peak_2'], format='%H:%M:%S').dt.time
+        load_peaks_df['Time_Peak_3'] = pd.to_datetime(load_peaks_df['Time_Peak_3'], format='%H:%M:%S').dt.time
+
+        load_peaks_df['hour_to_shave'] = [find_valid_peak(row_pv, row_load) for row_pv, row_load in
+                      zip(pv_peak_df.itertuples(index=False), load_peaks_df.itertuples(index=False))]
+
+        # print("daily peaks: ", load_peaks_df)
+        something_grouped = load_df.groupby(load_df.index.date)['agg_load'].values
+        print(something_grouped)
+
         # return shifted_load_profiles
 
-    else:
-        # this would be individual not in LEC
-        load_df = load_profiles  # will not need this.
-        pv_df = pv_profiles  # will not need this.
-        # same thing, divide by days, find daily load and pv peaks, establish time of day when load-shifting can be
-        # applied, and shift loads from single user to shave load peaks and add to high pv production hours, daily.
+    return True
+################################################
 
-        # return shifted_load_profile
+
+def consider_price(
+        excess_prod, unsatisfied_load, soldPerTS, boughtPerTS, PGB_1=12, PGB_2=15, PGS=5, PP2P=10) -> pd.DataFrame:
+
+    # excess_prod and unsatisfied_load already without timestamp
+
+    # get price grid buy (PGB) values for different times.
+    ### for cired-type lecs with timestamp ###
+    # PGB = self.unsatisfied_load.index.to_series().apply(lambda ts: PGB_2 if 6 <= ts.hour <= 22 else PGB_1)
+    # PGB = PGB.reset_index(drop=True)
+    ######
+    ### for ec-ev data starts at 00:00 ###
+    size = 96
+    PGB = pd.Series(15, index=range(size))
+    PGB.loc[0:23] = 12  # 00:00 to 06:00
+    PGB.loc[87:95] = 12  # 22:00 to 24:00
+    # print("PGB: ", PGB)
+
+    # soldPerTS = self.getSellVolumePerMemberPerTS  # sold in P2P market
+    # boughtPerTS = self.getBuyVolumePerMemberPerTS  # bought from P2P market
+
+    excess_prod.columns = soldPerTS.columns  # might not need this??
+    unsatisfied_load.columns = boughtPerTS.columns
+
+    soldGridPerTS = excess_prod - soldPerTS  # sold to Grid
+    boughtGridPerTS = unsatisfied_load - boughtPerTS  # bought from Grid
+
+    # Transaction Value: BUYING from P2P Market
+    TV_buyP2P = boughtPerTS * PP2P
+
+    # Transaction Value: BUYING from Grid
+    TV_buyGrid = boughtGridPerTS.multiply(PGB, axis=0)
+
+    # Transaction Value: SELLING to P2P Market
+    TV_sellP2P = soldPerTS * PP2P
+
+    # Transaction Value: SELLING TO Grid
+    TV_sellGrid = soldGridPerTS * PGS
+
+    TV_PerMemberPerTS = TV_sellP2P + TV_sellGrid - TV_buyP2P - TV_buyGrid
+
+    return TV_PerMemberPerTS
 
 
 
@@ -126,9 +248,7 @@ class simulate_LEC:
         self.production = production
         self.consumption = consumption
 
-        # BEFORE ALL OF THIS STILL NEED TO DO LOAD-SHIFTING AND AGGREGATE LOADS!! all 6-apt buildings???
-
-        # first PV SELF-CONSUMPTION
+        # first: PV SELF-CONSUMPTION
         self.excess_prod = (self.production - self.consumption).clip(lower=0)
         self.unsatisfied_load = (self.consumption - self.production).clip(lower=0)
 
@@ -164,8 +284,10 @@ class simulate_LEC:
                             self.excess_prod.iloc[t, user] -= charge  # make a copy and save in different df?????
                             # unsatisfied load stays the same
 
+        # output from 2nd step is the final excess_prod and unsatisfied_load
+
         # third: TRADING IN LEC
-        self.production = self.production.reset_index(drop=True)  # shouldnt need timestamp anymore ... can eliminate??
+        self.production = self.production.reset_index(drop=True)  # shouldn't need timestamp anymore ... can eliminate??
         self.consumption = self.consumption.reset_index(drop=True)  # same, can eliminate??
         self.report = None
         if self.lec_flag:   # LEFT OFF HERE!!!!! ... what to do if ELSE? i.e. NO LEC.
@@ -175,49 +297,7 @@ class simulate_LEC:
 
         self._uid = 0
 
-
-    # UPDATE THIS WITH TOOOL'S SET CONFIGURATION!!!!?
-    def consider_price(
-            self, PGB_1=12, PGB_2=15, PGS=5, PP2P=10) -> pd.DataFrame:
-
-        # get PGB values for different times.
-        ### for cired-type lecs with timestamp ###
-        # PGB = self.unsatisfied_load.index.to_series().apply(lambda ts: PGB_2 if 6 <= ts.hour <= 22 else PGB_1)
-        # PGB = PGB.reset_index(drop=True)
-        ######
-        ### for ec-ev data starts at 00:00 ###
-        size = 96
-        PGB = pd.Series(15, index=range(size))
-        PGB.loc[0:23] = 12  # 00:00 to 06:00
-        PGB.loc[87:95] = 12  # 22:00 to 24:00
-        # print("PGB: ", PGB)
-
-        soldPerTS = self.getSellVolumePerMemberPerTS  # sold in P2P market
-        boughtPerTS = self.getBuyVolumePerMemberPerTS  # bought from P2P market
-
-        # reset index of unsatisfied load and excess prod (shouldn't need timestamp anymore)
-        self.excess_prod = self.excess_prod.reset_index(drop=True)
-        self.unsatisfied_load = self.unsatisfied_load.reset_index(drop=True)
-        self.excess_prod.columns = soldPerTS.columns
-        self.unsatisfied_load.columns = boughtPerTS.columns
-
-        soldGridPerTS = self.excess_prod - soldPerTS  # sold to Grid
-        boughtGridPerTS = self.unsatisfied_load - boughtPerTS  # bought from Grid
-
-        # Transaction Value: BUYING from P2P Market
-        TV_buyP2P = boughtPerTS * PP2P
-
-        # Transaction Value: BUYING from Grid
-        TV_buyGrid = boughtGridPerTS.multiply(PGB, axis=0)
-
-        # Transaction Value: SELLING to P2P Market
-        TV_sellP2P = soldPerTS * PP2P
-
-        # Transaction Value: SELLING TO Grid
-        TV_sellGrid = soldGridPerTS * PGS
-
-        TV_PerMemberPerTS = TV_sellP2P + TV_sellGrid - TV_buyP2P - TV_buyGrid
-        return TV_PerMemberPerTS
+        # outputs needed: quantity sold in p2p/ext-grid, quantity sold in p2p/ext-grid -> with that, economic benefit.
 
 
     def createReport(self) -> None:
