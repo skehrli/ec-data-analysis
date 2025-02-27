@@ -32,122 +32,84 @@ def aggregate_profiles(n_agg, load_profiles):
     return agg_df
 
 ################################################
-# load shifting, NOT FINISHED!!!
-def find_top_peaks(group, n=3):
-    values = group.values
-    times = group.index
 
-    peaks, _ = find_peaks(values, distance=3)  # 3 hrs distance between peaks?
-    # get top n peaks if available
-    if len(peaks) >= n:
-        top_peaks = sorted(peaks, key=lambda i: values[i], reverse=True)[:n]
-    else:
-        top_peaks = peaks  # if fewer than n peaks, take what there is
+def apply_load_shifting(df_load, df_generation, dsm_percentage):
+    """
+    Attempts to reduce peak loads by shifting loads for a subset of users while increasing PV consumption,
+    and ensuring that loads are not shifted outside 8 AM - 10 PM.
 
-    peak_values = values[top_peaks]
-    peak_times = times[top_peaks].strftime('%H:%M:%S')  # format as time
+    Parameters:
+    - df_load: DF with hourly load profiles
+    - df_generation: DF with hourly PV generation profiles 
+    - dsm_percentage: Percentage of users capable of shifting load (DSM)
 
-    # fill with 0s if fewer than 3 peaks (and nan for time)
-    while len(peak_values) < n:
-        peak_values = np.append(peak_values, 0)
-        peak_times = np.append(peak_times, np.nan)
+    Returns:
+    - df_load_shifted: New df with adjusted load profiles
+    """
 
-    return np.concatenate((peak_values, peak_times))
+    df_shifted = df_load.copy()
+    users = df_load.columns
+    shiftable_users = np.random.choice(users, size=int(len(users) * dsm_percentage/100), replace=False)
 
+    # Dishwasher and washing machine shifting amounts (daily and every 3 days)
+    shift_daily = 0.64  # kWh
+    shift_3day = 0.5  # kWh
 
-def find_valid_peak(row_pv, row_load):
-    cutoff_time = pd.to_datetime('22:00:00', format='%H:%M:%S').time()  # cannot do load shifting after 10pm
+    # convert timestamps to date for grouping
+    df_load["date"] = df_load.index.date
+    df_generation["date"] = df_generation.index.date
+    grouped_load = df_load.groupby("date")
+    grouped_generation = df_generation.groupby("date")
 
-    pv_time = row_pv.Time_Peak_1
+    for day, data in grouped_load:
 
-    # Check each peak in load
-    for peak_time in ['Time_Peak_1', 'Time_Peak_2', 'Time_Peak_3']:
-        load_time = getattr(row_load, peak_time)
+        # find peak hours of each day in allowed time range
+        N_peaks = 3  # number of peaks
+        total_demand = data.drop(columns=["date"], errors="ignore").sum(axis=1)
 
-        # ensure valid time values
-        if pd.isna(load_time):
-            continue
+        valid_hours = total_demand.between_time("08:00", "22:00")
 
-        # CURRENTLY: check if load time is more than 2 hrs after pv peak time but before 22:00
-        # this part could be changed to more than 2 hrs BEFORE pv peak time but after 07:00 ?? or both.
-        if ((datetime.combine(datetime.today(), load_time) - datetime.combine(datetime.today(),
-                                                                              pv_time)).total_seconds() > 7200) and (
-                load_time < cutoff_time):
-            return load_time  # return the first valid load time
+        peak_indices, _ = find_peaks(valid_hours, prominence=0.2, distance=N_peaks)
+        peak_hours = valid_hours.iloc[peak_indices].nlargest(3).index if len(
+            peak_indices) > 0 else valid_hours.nlargest(3).index
+        print("peak hours: ", peak_hours)
 
-    return np.nan  # if no valid peak, return nan
+        # find valley hours in allowed time range
+        valley_hours = valid_hours.nsmallest(N_peaks).index  # lowest 3 hours
+        print("valley hours: ", valley_hours)
 
+        # Get PV generation for the same day
+        pv_data = grouped_generation.get_group(day).drop(columns=["date"], errors="ignore")
+        pv_generation = pv_data.sum(axis=1)
+        # all 3 highest pv hours are probably from same "pv peak"
+        high_pv_hours = pv_generation.nlargest(3).index  # assuming these are in the valid range of hours.
+        print("high pv hours:", high_pv_hours)
 
-# need to finish!!
-def apply_load_shifting(pv_profiles, load_profiles, percentage_dsm, lec_flag=True):
-    # dishwashers (daily) ... avg 0.643 kwh per use
-    # washing machines (every 3 days) ... avg 0.5 kwh per use
+        # shift daily load (dishwasher)
+        if len(peak_hours) > 0:
+            peak_hour = peak_hours[0]  # take the highest peak
+            for user in shiftable_users:
+                if df_shifted.loc[peak_hour, user] >= shift_daily:  # user has enough load to shift
+                    # try to shift to high PV generation hours
+                    shift_target = np.random.choice(high_pv_hours) if not high_pv_hours.empty else np.random.choice(
+                        valley_hours)
+                    # shift the load
+                    df_shifted.loc[peak_hour, user] -= shift_daily
+                    df_shifted.loc[shift_target, user] += shift_daily
 
-    """ function for members of LEC should have access to all load and PV profiles, aggregate and choose best load
-    shifting times, function for individuals (not in LEC) should only have access to individual load and PV profiles,
-     and choose best load shifting times according to that.
-     maybe this will already be obvious from input, lec will have many members, individuals just 1"""
+        # shift every 3 days (washing machine)
+        if day.day % 3 == 0 and len(peak_hours) > 0:
+            peak_hour = peak_hours[1] if len(peak_hours) > 1 else peak_hours[0]  # try to use 2nd highest peak
+            for user in shiftable_users:
+                if df_shifted.loc[peak_hour, user] >= shift_3day:
+                    shift_target = np.random.choice(high_pv_hours) if not high_pv_hours.empty else np.random.choice(
+                        valley_hours)
+                    df_shifted.loc[peak_hour, user] -= shift_3day
+                    df_shifted.loc[shift_target, user] += shift_3day
 
-    numMembers = load_profiles.shape[1]
-    numDSM = round(numMembers * percentage_dsm / 100)
-    columns_to_modify = load_profiles.sample(n=numDSM, axis=1).columns.sort_values()  # members with dsm
-    # now find 20% of columns_to_modify which will shave 1 hour BEFORE 'hour_to_shave', and add to 1hr BEFORE peak pv
-    # 20% which will shave 1 hour AFTER 'hour_to_shave', and add to 1hr AFTER peak pv
-    # and 60% which will shave right on 'hour_to_shave', and add to peak pv
+    df_shifted.drop(columns=["date"], inplace=True, errors='ignore')
 
-    if lec_flag:
-        # aggregate all load profiles
-        load_df = pd.DataFrame(index=load_profiles.index)  # df with aggregated load profiles
-        load_df['agg_load'] = load_profiles.iloc[:, 1:].sum(axis=1)
-        # print("load df: ", load_df)
-        # but now would need to divide by days, find daily load peaks, establish time of day when load-shifting can
-        # be applied, e.g. 10am-10pm?, and identify which peaks to "shave" daily (i.e. substracted from columns_to_modify).
-
-        # find 3 highest values
-        N_peaks = 3
-        daily_peaks = load_df.groupby(load_df.index.date)['agg_load'].apply(find_top_peaks, n=N_peaks)
-        # new DF with daily timestamp, and N columns with the peaks and N with the times
-        # make columns
-        peak_columns = [f'Peak_{i + 1}' for i in range(N_peaks)]
-        time_columns = [f'Time_Peak_{i + 1}' for i in range(N_peaks)]
-        all_columns = peak_columns + time_columns
-        load_peaks_df = pd.DataFrame(daily_peaks.tolist(),
-                                      index=pd.to_datetime(daily_peaks.index),
-                                      columns=all_columns)
-        # print("load peaks: ", load_peaks_df)
-
-        # aggregate all pv profiles and find peak
-        pv_df = pd.DataFrame(index=pv_profiles.index)  # df with aggregated load profiles
-        pv_df['agg_pv'] = pv_profiles.iloc[:, 1:].sum(axis=1)
-        # print("pv df: ", pv_df)
-        # but now would need to divide by days, find daily pv peak, establish window of +-2 hours from peak where
-        # daily "shaved" loads can be shifted to (i.e. added to columns_to_modify).
-
-        N_peaks = 1
-        daily_peaks = pv_df.groupby(pv_df.index.date)['agg_pv'].apply(find_top_peaks, n=N_peaks)
-        peak_columns = [f'Peak_{i + 1}' for i in range(N_peaks)]
-        time_columns = [f'Time_Peak_{i + 1}' for i in range(N_peaks)]
-        all_columns = peak_columns + time_columns
-        pv_peak_df = pd.DataFrame(daily_peaks.tolist(),
-                                      index=pd.to_datetime(daily_peaks.index),
-                                      columns=all_columns)
-        # print("pv peaks: ", pv_peak_df)
-
-        pv_peak_df['Time_Peak_1'] = pd.to_datetime(pv_peak_df['Time_Peak_1'], format='%H:%M:%S').dt.time
-        load_peaks_df['Time_Peak_1'] = pd.to_datetime(load_peaks_df['Time_Peak_1'], format='%H:%M:%S').dt.time
-        load_peaks_df['Time_Peak_2'] = pd.to_datetime(load_peaks_df['Time_Peak_2'], format='%H:%M:%S').dt.time
-        load_peaks_df['Time_Peak_3'] = pd.to_datetime(load_peaks_df['Time_Peak_3'], format='%H:%M:%S').dt.time
-
-        load_peaks_df['hour_to_shave'] = [find_valid_peak(row_pv, row_load) for row_pv, row_load in
-                      zip(pv_peak_df.itertuples(index=False), load_peaks_df.itertuples(index=False))]
-
-        # print("daily peaks: ", load_peaks_df)
-        something_grouped = load_df.groupby(load_df.index.date)['agg_load'].values
-        print(something_grouped)
-
-        # return shifted_load_profiles
-
-    return True
+    return df_shifted
 ################################################
 
 
